@@ -1,0 +1,194 @@
+---
+title: "Lab 04 - Exploratory Data Analysis"
+author: "Brandyn Ruiz"
+date: "9/9/2020"
+output: html_document
+link-citations: yes
+---
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+library(data.table)
+library(leaflet)
+library(tidyverse)
+library(dplyr)
+library(ggmosaic)
+```
+
+# Learning Goals
+
+- Read in and prepare the meteorological dataset
+- Create several graphs with different `geoms()` in `ggplot2`
+- Create a facet graph
+- Conduct some customizations to the graphs
+- Create a more detailed map using `leaflet()`
+
+
+# Lab Description
+
+We will again work with the meteorological data presented in lecture.
+
+**The objective of the lab is to examine the association between monthly average dew point temperature and relative humidity in four regions of the US and by elevation.**
+
+# Steps
+
+### 1. Read in the data
+
+First download and then read in with data.table:fread()
+
+```{r, echo=TRUE, message=FALSE}
+download.file("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz", "met_all.gz", method="libcurl", timeout = 60)
+met <- data.table::fread("met_all.gz")
+```
+
+### 2. Prepare the data
+
+- Remove temperatures less than -17C
+- Make sure there are no missing data in the key variables coded as 9999, 999, etc
+- Take monthly averages by weather station
+- Create a region variable for NW, SW, NE, SE based on lon = -98.00 and lat = 39.71 degrees
+- Create a categorical variable for elevation as in the lecture slides
+
+```{r}
+met <- met[temp>-17]
+met[met$elev == 9999.0] <- NA
+
+met_avg <- met[,.(temp = mean(temp, na.rm = TRUE), rh = mean(rh, na.rm = TRUE),
+                  wind.sp = mean(wind.sp, na.rm = TRUE), vis.dist = mean(vis.dist, na.rm = TRUE),
+                  dew.point = mean(dew.point, na.rm = TRUE), lat = mean(lat), lon = mean(lon),
+                  elev = mean(elev, na.rm = TRUE)), by = "USAFID"]
+
+met_avg$region <- ifelse(met_avg$lon > -98 & met_avg$lat > 39.71, 'North East', 
+                         ifelse(met_avg$lon > -98 & met_avg$lat < 39.71, 'South East',
+                                ifelse(met_avg$lon < -98 & met_avg$lat > 39.71,
+                                       'North West', 'South West')))
+
+met_avg$elev_cat <- ifelse(met_avg$elev > 252 , "high", "low")
+```
+
+### 3. Use `geom_boxplot` to examine the dew point temperature and relative humidity by region
+
+- Use facets
+- Make sure to deal with `NA` category
+- Describe what you observe in the graph
+```{r}
+met_avg %>%
+  filter(!(region %in% NA))%>%
+ggplot(aes(y = dew.point, fill = region))+
+  geom_boxplot()+
+  facet_wrap(~region)+
+  labs(fill = "Region", y = "Dew Point", title = "Boxplot of Dew point by Region")
+```
+
+From our boxplot of Dew point by region we see that the North West region has the greatest range for its quantiles compared to the other regions. The Souht East region has the highest range compared to the other dew points in the other regions, but the South East region has a small quantile.
+
+```{r}
+met_avg %>%
+  filter(!(region %in% NA))%>%
+ggplot(aes(y = rh, fill = region))+
+  geom_boxplot()+
+  facet_wrap(~region)+
+  labs(title = 'Boxplot of Relative humidity by Region', y = 'Relative Humidity')
+```
+
+We see the same trend with Relative humidity in the North West region having the greatest range in its quatiles being the larger of the other 3 regions. However, the North East and South East have the higher quantiles compares the Western segions. Any of the Eastern regions also have outliers.
+
+### 4. Use `geom_point` with `stat_smooth` to examine the association between dew point temperature and relative humidity by region
+
+- Colour points by region
+- Make sure to deal with `NA` category
+- Fit a linear regression line by region
+- Describe what you observe in the graph
+
+```{r, message=FALSE}
+met_avg %>%
+  filter(!(region %in% NA))%>%
+ggplot(aes(x = dew.point, y = rh, color = region))+
+  geom_point()+
+  stat_smooth(method = lm)+
+  labs(title = 'Scatter plot of Dew Point and Relative Humiidity by Region', x = 'Dew Point', y = 'Relative Humidity', color = 'Region')
+```
+
+Within our scatter plot of Dew point and Relative humidity by region we see the general trend that as dew point increases so does relative humidity. We also notice that the association between dew point and relative humidity are well scattered for the North West region as well as the South West. The North East and the South East regions have tighter clusters and are more central.
+
+### 5. Use `geom_bar` to create barplots of the weather stations by elevation category coloured by region
+
+- Bars by elevation category
+- Change colours from the default. Colour by region using `scale_fill_brewer` see [this](http://rstudio-pubs-static.s3.amazonaws.com/5312_98fc1aba2d5740dd849a5ab797cc2c8d.html)
+- Create nice labels on axes and add a title
+- Describe what you observe in the graph
+
+```{r}
+met_avg%>%
+  filter(!(region %in% NA))%>%
+  ggplot(aes(x = elev_cat, fill = region))+
+  geom_bar()+
+  scale_fill_brewer(palette = 'RdYlBu')+
+  labs(title = 'Barplot of Elevation category by Region', x = 'Elevation Category', y = 'Frequency', fill = 'Region')
+```
+
+From our barplot we see that the North West region has very few frequencies of low elevations as this makes sense as those regions tend to be more mountainous. The south east has the greatest amount of low elevations which also makes snese for states like Florida, Alabama, and Georgia. Frequencies for the high elevation category are pretty even as each region seems to almost have a quarter each, but the north east region has the greatest frequencies of high elevations which makes sense because these regions are more mountainous like the Appalacian mountains.
+
+### 6. Use `stat_summary` to examine mean dew point and relative humidity by region with standard deviation error bars
+
+- Make sure to remove `NA`
+- Use fun.data="mean_sdl" in `stat_summary`
+- Describe the graph and what you observe
+
+```{r}
+met_avg%>%
+  filter(!(region %in% NA))%>%
+  ggplot(aes(x = region, y = dew.point))+
+  stat_summary(fun.data = "mean_sdl")+
+  labs(title = 'Error bars for Mean Dew Point by Region',
+       y = 'Dew Point', x = 'Region')
+```
+
+Dew point temperature has higher variability within the Western regions as the line above and below the mean point are 1 standad deviation above and below respectively of the mean. Any of the Eastern regions have a much smaller variability of dew point temperatures.
+
+```{r}
+met_avg%>%
+  filter(!(region %in% NA))%>%
+  ggplot(aes(x = region, y = rh))+
+  stat_summary(fun.data = "mean_sdl")+
+  labs(title = 'Error bars for Relative Humidity by Region',
+       y = 'Relative Humidity', x = 'Region')
+```
+
+For our error bars for Relative humidity by region we see that the North West region has the greatest variability amongst all regions. However, we still see the same patterns that the Western regions have the greater varibaility compared to the Eastern regions. 
+
+### 7. Make a map showing the spatial trend in relative humidity in the US
+
+- Make sure to remove `NA`
+- Use leaflet()
+- Make a colour palette with custom colours
+- Add a legend
+
+```{r}
+flmet_avg <- met_avg[!is.na(rh)]
+
+pal <- colorNumeric(c('yellow', 'orange', 'blue'), domain = flmet_avg$rh)
+
+leaflet(flmet_avg)%>%
+  addProviderTiles('OpenStreetMap')%>%
+  addCircles(lat = ~lat, lng = ~lon, color = ~pal(rh), opacity = 1, fillOpacity = 1, radius = 500)%>%
+  addLegend('bottomleft', pal=pal, values = flmet_avg$rh, title = 'Relative Humidity', opacity = 1)
+
+```
+
+From our state map of relative humidity wee see the trend that the Eastern regions have more humidity compared to the Western. This is very noticeable when comparing the South Western region states like Arizona and New Mexico that are more desert type and don't have as much rain or snow fall.
+
+### 8. Use a ggplot extension
+
+- Pick and extension (except cowplot) from [here](https://exts.ggplot2.tidyverse.org/gallery/) and make a plot of your choice using the met data (or met_avg)
+- Might want to try examples that come with the extension first (e.g. ggtech, gganimate, ggforce)
+
+```{r}
+met_avg%>%
+  filter(!(region %in% NA))%>%
+  ggplot()+
+  geom_mosaic(aes(x = product(elev_cat), fill = region))+
+  labs(title = 'Mosaic plot of Elevation Category by Region',
+       x ='Elevation Category', y = 'Region', fill = 'Region')
+```
+
+I chose the mosaic plot becuase I used to make these a lot in SAS and JMP when comparing categorical varibales together. This fits nicely with our dataset met_avg comparing varibales elev_cat and region. From our mosaic plot we can interpret the frequencies and even percentage of the make of the varibales within out dataset.
